@@ -94,6 +94,8 @@ class KeyboardHandler:
                     self.display.request_gutter()
                 elif char == 's' or char == 'q':
                     self.display.request_stop()
+                elif char == 'i':
+                    self.display.request_intervene()
         except Exception:
             pass
     
@@ -488,100 +490,132 @@ class RalphAgent:
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(prompt)
                 
-                async for message in client.receive_response():
-                    # Process different message types
-                    if isinstance(message, AssistantMessage):
-                        # A turn finished (Assistant replied)
-                        from ..cli.registry import track_usage
-                        track_usage(1)
-                        
-                        if self.display:
-                            self.display.stats.session_turns += 1
+                # Process messages in a loop that supports intervention
+                while True:
+                    got_result = False
+                    
+                    async for message in client.receive_response():
+                        # Check for intervention request (between messages)
+                        if self.display and self.display.is_intervene_requested():
+                            self.display.clear_intervene()
+                            self._log("INTERVENTION requested by user", "INTERVENE")
                             
-                            # Check if current message has usage info (SDK dependent)
-                            # NOTE: Most SDK AssistantMessage objects don't have usage yet
-                            usage = getattr(message, "usage", None)
-                            if usage:
+                            # Interrupt current execution
+                            await client.interrupt()
+                            
+                            # Prompt user for intervention text
+                            intervention_text = self.display.prompt_intervene()
+                            
+                            if intervention_text:
+                                self._log(f"Intervention: {intervention_text}", "INTERVENE")
+                                # Send the intervention as a new query continuing the conversation
+                                await client.query(f"[USER INTERVENTION] {intervention_text}")
+                                # Break to re-enter message processing loop
+                                break
+                            else:
+                                self._log("Intervention cancelled", "INTERVENE")
+                                # Resume normal processing - the break will exit and we'll continue
+                                await client.query("Continue with what you were doing.")
+                                break
+                        
+                        # Process different message types
+                        if isinstance(message, AssistantMessage):
+                            # A turn finished (Assistant replied)
+                            from ..cli.registry import track_usage
+                            track_usage(1)
+                            
+                            if self.display:
+                                self.display.stats.session_turns += 1
+                                
+                                # Check if current message has usage info (SDK dependent)
+                                # NOTE: Most SDK AssistantMessage objects don't have usage yet
+                                usage = getattr(message, "usage", None)
+                                if usage:
+                                    def get_val(obj, key, default=0):
+                                        if hasattr(obj, "get"):
+                                            return obj.get(key, default)
+                                        return getattr(obj, key, default)
+
+                                    current_in = get_val(usage, "input_tokens")
+                                    current_in += get_val(usage, "cache_read_input_tokens")
+                                    current_in += get_val(usage, "cache_creation_input_tokens")
+                                    current_out = get_val(usage, "output_tokens")
+                                    
+                                    self.display.update_stats(
+                                        input_tokens=current_in,
+                                        output_tokens=current_out,
+                                        context_used_tokens=current_in,
+                                        context_limit=self.context_limit,
+                                    )
+                                else:
+                                    # Just update plan usage if no token info yet
+                                    self.display._update_plan_usage()
+                                    self.display.refresh()
+                                    
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    result_text += block.text
+                                    self._log(block.text, "TEXT")
+                                    if self.display:
+                                        self.display.log_text(block.text)
+                                elif isinstance(block, ThinkingBlock):
+                                    self._log(block.thinking, "THINKING")
+                                    if self.display:
+                                        self.display.log_thinking(block.thinking)
+                                elif isinstance(block, ToolUseBlock):
+                                    # Log tool use
+                                    import json
+                                    tool_input_str = json.dumps(block.input, indent=2) if block.input else ""
+                                    self._log(f"{block.name}: {tool_input_str}", "TOOL_USE")
+                                elif isinstance(block, ToolResultBlock):
+                                    # Log tool result (full, non-truncated)
+                                    content_str = str(block.content) if block.content else ""
+                                    self._log(f"[{block.tool_use_id}] {content_str}", "TOOL_RESULT")
+                        
+                        elif isinstance(message, ResultMessage):
+                            # Extract stats from result
+                            success = not message.is_error
+                            duration_ms = message.duration_ms
+                            num_turns = message.num_turns
+                            got_result = True
+                            
+                            if message.usage:
                                 def get_val(obj, key, default=0):
                                     if hasattr(obj, "get"):
                                         return obj.get(key, default)
                                     return getattr(obj, key, default)
 
-                                current_in = get_val(usage, "input_tokens")
-                                current_in += get_val(usage, "cache_read_input_tokens")
-                                current_in += get_val(usage, "cache_creation_input_tokens")
-                                current_out = get_val(usage, "output_tokens")
-                                
+                                # Sum ALL input tokens (including cache)
+                                input_tokens = get_val(message.usage, "input_tokens")
+                                input_tokens += get_val(message.usage, "cache_read_input_tokens")
+                                input_tokens += get_val(message.usage, "cache_creation_input_tokens")
+                                output_tokens = get_val(message.usage, "output_tokens")
+                            
+                            if message.total_cost_usd:
+                                cost_usd = message.total_cost_usd
+                            
+                            if message.result:
+                                result_text = message.result
+                            
+                            # Log result summary
+                            self._log(f"Success: {success}, Tokens: {input_tokens}/{output_tokens}, Cost: ${cost_usd:.2f}", "RESULT")
+                            
+                            # Update display stats with final iteration numbers
+                            if self.display:
                                 self.display.update_stats(
-                                    input_tokens=current_in,
-                                    output_tokens=current_out,
-                                    context_used_tokens=current_in,
+                                    input_tokens=input_tokens,
+                                    output_tokens=output_tokens,
+                                    cost_usd=cost_usd,
+                                    duration_ms=duration_ms,
+                                    num_turns=num_turns,
+                                    context_used_tokens=input_tokens,
                                     context_limit=self.context_limit,
                                 )
-                            else:
-                                # Just update plan usage if no token info yet
-                                self.display._update_plan_usage()
-                                self.display.refresh()
-                                
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                result_text += block.text
-                                self._log(block.text, "TEXT")
-                                if self.display:
-                                    self.display.log_text(block.text)
-                            elif isinstance(block, ThinkingBlock):
-                                self._log(block.thinking, "THINKING")
-                                if self.display:
-                                    self.display.log_thinking(block.thinking)
-                            elif isinstance(block, ToolUseBlock):
-                                # Log tool use
-                                import json
-                                tool_input_str = json.dumps(block.input, indent=2) if block.input else ""
-                                self._log(f"{block.name}: {tool_input_str}", "TOOL_USE")
-                            elif isinstance(block, ToolResultBlock):
-                                # Log tool result (full, non-truncated)
-                                content_str = str(block.content) if block.content else ""
-                                self._log(f"[{block.tool_use_id}] {content_str}", "TOOL_RESULT")
+                                self.display.finish_iteration()
                     
-                    elif isinstance(message, ResultMessage):
-                        # Extract stats from result
-                        success = not message.is_error
-                        duration_ms = message.duration_ms
-                        num_turns = message.num_turns
-                        
-                        if message.usage:
-                            def get_val(obj, key, default=0):
-                                if hasattr(obj, "get"):
-                                    return obj.get(key, default)
-                                return getattr(obj, key, default)
-
-                            # Sum ALL input tokens (including cache)
-                            input_tokens = get_val(message.usage, "input_tokens")
-                            input_tokens += get_val(message.usage, "cache_read_input_tokens")
-                            input_tokens += get_val(message.usage, "cache_creation_input_tokens")
-                            output_tokens = get_val(message.usage, "output_tokens")
-                        
-                        if message.total_cost_usd:
-                            cost_usd = message.total_cost_usd
-                        
-                        if message.result:
-                            result_text = message.result
-                        
-                        # Log result summary
-                        self._log(f"Success: {success}, Tokens: {input_tokens}/{output_tokens}, Cost: ${cost_usd:.2f}", "RESULT")
-                        
-                        # Update display stats with final iteration numbers
-                        if self.display:
-                            self.display.update_stats(
-                                input_tokens=input_tokens,
-                                output_tokens=output_tokens,
-                                cost_usd=cost_usd,
-                                duration_ms=duration_ms,
-                                num_turns=num_turns,
-                                context_used_tokens=input_tokens,
-                                context_limit=self.context_limit,
-                            )
-                            self.display.finish_iteration()
+                    # Exit the outer while loop if we got a result (iteration complete)
+                    if got_result:
+                        break
         
         except Exception as e:
             success = False

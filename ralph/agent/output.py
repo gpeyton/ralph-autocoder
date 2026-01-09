@@ -111,6 +111,7 @@ class AgentDisplay:
         self._paused = False
         self._stop_requested = False
         self._gutter_requested = False
+        self._intervene_requested = False
         
         # Capture baseline usage at start to avoid double-counting current session
         from ..cli.registry import get_today_usage
@@ -191,6 +192,11 @@ class AgentDisplay:
         self._gutter_requested = True
         self.log_activity("warning", "GUTTER requested - will start fresh iteration")
     
+    def request_intervene(self) -> None:
+        """Request an intervention to inject a prompt into the current execution."""
+        self._intervene_requested = True
+        self.log_activity("info", "INTERVENE requested - will pause for your input...")
+    
     def is_pause_requested(self) -> bool:
         """Check if pause was requested."""
         return self._paused
@@ -203,6 +209,10 @@ class AgentDisplay:
         """Check if gutter was requested."""
         return self._gutter_requested
     
+    def is_intervene_requested(self) -> bool:
+        """Check if intervention was requested."""
+        return self._intervene_requested
+    
     def clear_pause(self) -> None:
         """Clear the pause flag."""
         self._paused = False
@@ -214,6 +224,59 @@ class AgentDisplay:
     def clear_gutter(self) -> None:
         """Clear the gutter flag."""
         self._gutter_requested = False
+    
+    def clear_intervene(self) -> None:
+        """Clear the intervention flag."""
+        self._intervene_requested = False
+    
+    def prompt_intervene(self) -> str:
+        """Pause the display and prompt user for intervention text.
+        
+        Returns:
+            The intervention text entered by the user, or empty string if cancelled.
+        """
+        # Stop the live display temporarily
+        if self._live:
+            self._live.stop()
+        
+        # Print a visual separator
+        self.console.print()
+        self.console.print(Panel(
+            "[bold magenta]INTERVENTION[/bold magenta]\n"
+            "[dim]Enter instructions to inject into the agent's context.[/dim]\n"
+            "[dim]Press Enter on empty line to cancel.[/dim]",
+            border_style="magenta",
+            width=self.panel_width,
+        ))
+        
+        # Get user input
+        try:
+            from rich.prompt import Prompt
+            intervention_text = Prompt.ask(
+                "[bold magenta]›[/bold magenta] Your instruction",
+                default="",
+                show_default=False,
+            )
+        except (KeyboardInterrupt, EOFError):
+            intervention_text = ""
+        
+        # Log the intervention
+        if intervention_text:
+            self.log_activity("info", f"Intervention: {intervention_text[:60]}...")
+        else:
+            self.log_activity("info", "Intervention cancelled")
+        
+        # Clear and restart the live display
+        self.console.clear()
+        self._live = Live(
+            self._render(),
+            console=self.console,
+            refresh_per_second=4,
+            transient=True,
+        )
+        self._live.start()
+        
+        return intervention_text
     
     def update_stats(
         self,
@@ -301,8 +364,9 @@ class AgentDisplay:
         from ..cli.registry import get_today_usage
         ralph_persistent_messages = get_today_usage()
         
-        # Total = Official Claude Code + Ralph Persistent + Current Session
-        total_messages = claude_code_messages + ralph_persistent_messages + session_messages
+        # Total = Official Claude Code + Ralph Persistent
+        # Note: ralph_persistent_messages includes current session usage via track_usage()
+        total_messages = claude_code_messages + ralph_persistent_messages
         self.stats.plan_messages_used = total_messages
         
         if self.stats.plan_messages_limit > 0:
@@ -506,6 +570,8 @@ class AgentDisplay:
             hint_text.append("CONTROLS ", style="bold white")
             hint_text.append("[p]", style="bold cyan")
             hint_text.append(" pause  ", style="dim")
+            hint_text.append("[i]", style="bold magenta")
+            hint_text.append(" intervene  ", style="dim")
             hint_text.append("[g]", style="bold yellow")
             hint_text.append(" gutter  ", style="dim")
             hint_text.append("[s]", style="bold red")
