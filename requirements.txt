@@ -1,0 +1,13 @@
+# Ralph Autocoder Dependencies
+# Install with: pip install -e .
+
+claude-agent-sdk>=0.1.0
+rich>=13.0.0
+questionary>=2.0.0
+textual>=0.50.0
+
+# SYSTEM REQUIREMENTS:
+# 1. Claude Code CLI: curl -fsSL https://claude.ai/install.sh | bash
+# 2. Node.js & npm (v18+) for MCP servers
+# 3. Playwright browsers: npx playwright install
+# 4. FIX NPM PERMISSIONS: sudo chown -R $(id -u):$(id -g) ~/.npm

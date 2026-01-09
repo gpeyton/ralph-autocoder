@@ -1,0 +1,47 @@
+{
+  "name": "[Project Name]",
+  "description": "[Brief overview of what this project does]",
+  "created": "[YYYY-MM-DD]",
+  "updated": "[YYYY-MM-DD]",
+  "max_iterations": 50,
+  "verify": {
+    "test": "[test command - e.g., pytest, npm test, go test ./...]",
+    "lint": "[lint command - e.g., ruff check ., npm run lint]",
+    "build": "[build command - e.g., python -m build, npm run build]",
+    "coverage_target": 80
+  },
+  "goals": [
+    "Primary goal 1",
+    "Primary goal 2"
+  ],
+  "non_goals": [
+    "Explicitly out of scope"
+  ],
+  "constraints": {
+    "technology": ["Language/Framework"],
+    "requirements": ["Key constraints"]
+  },
+  "tasks": [
+    {
+      "id": "1",
+      "name": "Task Name",
+      "description": "What needs to be done",
+      "status": "pending",
+      "priority": 1,
+      "success_criteria": [
+        "Criterion 1 - must be objectively verifiable",
+        "Criterion 2",
+        "Tests pass"
+      ],
+      "notes": "Additional context, constraints, or helpful links"
+    }
+  ],
+  "guardrails": [
+    {
+      "name": "Test Before Done",
+      "trigger": "Before marking any task complete",
+      "instruction": "Run verify.test and verify.lint - all must pass",
+      "added_after": "Initial setup"
+    }
+  ]
+}

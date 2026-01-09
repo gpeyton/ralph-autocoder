@@ -1,0 +1,41 @@
+# Progress Log
+
+## Project Context
+
+**Project**: [Project Name]
+**Started**: [Date]
+**Technology**: [Language/Framework]
+
+### Key Files
+- [Entry point file]
+- [Config file]
+- [Main module]
+
+### Architecture Notes
+- [Key patterns used]
+- [Important conventions]
+
+### Coding Conventions
+- [Style guide reference]
+- [Naming conventions]
+
+---
+
+## Completed Work
+
+<!-- 
+After each task, append an entry like:
+
+## Task [id]: [name]
+- **Status**: Done
+- **Completed**: [timestamp]
+- **Branch**: [branch name if used]
+- **Changes**: 
+  - [file changed]
+  - [feature added]
+- **Criteria Met**:
+  - [criterion 1] v
+  - [criterion 2] v
+- **Learnings**: [any patterns discovered or issues encountered]
+-->
+
